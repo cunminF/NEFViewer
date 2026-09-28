@@ -2,9 +2,55 @@
 
 ## 项目概述
 
-NEF Viewer：macOS 原生轻量 NEF（Nikon RAW）选片工具，SwiftUI + SwiftData，XcodeGen 生成工程。目标用户为单人本机使用，第一设计目标是**快**（替代 Lightroom/Bridge 的选片环节）。
+NEF Viewer：轻量 NEF（Nikon RAW）选片工具，目标用户为单人本机使用，第一设计目标是**快**（替代 Lightroom/Bridge 的选片环节）。两个平台：
 
-## 构建与验证
+- **macOS 版**（本目录）：SwiftUI + SwiftData，XcodeGen 生成工程
+- **Android Pad 版**（`NEFViewer-Android/`）：Kotlin + Jetpack Compose（Material 3）+ Room，目标机 Lenovo Y700（SM8850 / Adreno）
+
+## Android 版（NEFViewer-Android/）
+
+### 构建与验证
+
+```bash
+cd NEFViewer-Android
+./build.sh installDebug        # 包装脚本：设 JAVA_HOME=openjdk@17、检查 7892 代理在线
+./build.sh testDebugUnitTest   # JVM 单测直接解析 Mac 上 ~/Pictures/NEF Viewer 的真 NEF
+```
+
+- JDK 17 在 `/opt/homebrew/opt/openjdk@17`；Gradle 依赖走 `~/.gradle/gradle.properties` 里的 7892 代理（**代理必须在线**，build.sh 会警告）
+- 真机：Lenovo Y700（无线调试 `adb connect <ip>:5555`）；UI 自动化用 `uitap.py <文本>` 拿坐标 + `adb shell input tap`
+- 没有 instrumented 测试；验证 = JVM 单测 + adb 截图走端到端流程
+
+### 目录结构
+
+```
+app/src/main/java/com/nefviewer/android/
+├── MainActivity.kt            # NavHost + 全局预渲染进度浮层
+├── data/                      # Room（Project/Photo）+ SettingsRepository（DataStore）
+├── nef/NefParser.kt           # 纯 Kotlin TIFF 解析器（JVM 可测，无 Android 依赖）
+├── pipeline/                  # PreviewExtractor（解码+GPU）/ GpuImageOps（hardware Canvas）
+│                              # ThumbnailCache（640px 双级）/ PreviewCache（3200px + 全尺寸单槽）
+│                              # PreviewBuilder（全量预渲染）/ CacheManager
+├── importer/                  # LibraryImporter（SAF 枚举/copy/link）/ SafTree
+├── editor/ExternalEditor.kt   # ACTION_EDIT 发现 + FileProvider
+├── xmp/XmpExporter.kt         # xmp:Rating sidecar（与 macOS 版同格式）
+└── ui/                        # projects（列表+向导）/ browser（网格+单图）/ settings / components
+```
+
+### Android 版关键决策（都是用真机调试换来的，改动前先读）
+
+1. **图像必须 HARDWARE bitmap + hardware Canvas**（`GpuImageOps`）：解码产物进 GPU 显存，Compose 显示零上传；EXIF 方向 + 缩放一次 GPU draw 完成。但 **HARDWARE bitmap 不可 compress/读像素**——凡是要写盘的中间产物必须用 `hardwareOut = false` 走软件路径。验证：`dumpsys gfxinfo` 应见 `Pipeline=Skia (Vulkan)`、`meminfo` Graphics 段占大头。
+2. **翻页手势分层**（`SingleImageScreen.ZoomablePhoto`）：未放大时单指滑动**绝不消费**（让给 HorizontalPager 翻页）；双指捏合或已放大（>1.05×）才接管变换手势。`detectTransformGestures` 会吃掉单指拖动导致 Pager 失效——这是第一个真机 bug。
+3. **不要假设能访问 adb push 的文件**：scoped storage 下应用连自己的 `Android/data` 里 shell 创建的文件都读不到（联想 ZUI/Android 16 实测）。一切外部文件走 **SAF**；SAF 授权要**读写**都持久化（写用于 XMP/批量删除）。测试数据推到 `/sdcard/Download/` 再 SAF 授权。
+4. **照片访问 URI 优先**（`PhotoInputResolver`）：`documentUri` 非空走 PfdSeekableInput（链接源/SAF 图库副本），否则走图库文件路径。拷贝目标可以是应用私有目录（文件）或用户自选 SAF 目录（`NEF Viewer/<项目名>/` 子目录），删除项目/批量删除两条路径都要覆盖。
+5. **排序实时应用**：打分后 Room 流刷新，列表立即重排——Pager 当前页照片会跳（与 macOS 版一致的行为，不是 bug）。
+6. **EXIF orientation 入库即归一化**（orientation 5–8 交换宽高），与 macOS 版同规则；Z8 竖拍靠这个。
+7. **全尺寸解码看 generation**：翻页 `bumpGeneration`，解码完成发现代次过期即回收——快速连翻不能被 181MB 大解码堵住（largeHeap 已开）。
+8. Room 开发期允许 `fallbackToDestructiveMigration`（加字段直接升版本号，数据重来）。
+
+## macOS 版（本目录）
+
+### 构建与验证
 
 ```bash
 xcodegen generate   # 新增/删除源文件后必须重跑；.xcodeproj 是生成物，勿手改
@@ -15,7 +61,7 @@ xcodebuild -scheme NEFViewer -configuration Debug build
 - 应用数据（重置时用）：`rm ~/Library/Application\ Support/default.store*` + `rm -rf ~/Library/Caches/NEFViewer`
 - 每次重编译后 macOS 会重新弹「访问可移除宗卷」权限框（ad-hoc 签名 cdhash 变化），属正常现象
 
-## 目录结构
+### 目录结构
 
 ```
 project.yml                  # XcodeGen 工程定义（唯一事实源）
@@ -37,7 +83,7 @@ NEFViewer/
                              # BrowserState（+PhotoItem）/ RatingControl / SettingsView
 ```
 
-## 关键架构决策（都是用崩溃换来的，改动前先读）
+### macOS 版关键架构决策（都是用崩溃换来的，改动前先读）
 
 1. **绝不在视图 body/Builder 中修改任何状态**。SwiftUI 会提前求值 contextMenu 等内容，渲染期写 `@Observable` 属性 → 无限失效循环（实测主线程 100% / AppKit `NSGenericException` 布局循环）。状态修改只能发生在事件回调（onTap、Button action、onAppear/onChange、task）里。
 2. **绝不在 body 中访问 SwiftData 持久化属性做批量计算**。视图层用 `PhotoItem` 轻量快照（`BrowserState.swift`），SwiftData 模型只在快照构建（`.task`）和写入（评分）时触碰。body 中也不得有 LaunchServices/文件遍历等慢调用——全部挪到 `.task` 后台解析后存 `@State`。
@@ -46,9 +92,10 @@ NEFViewer/
 5. **EXIF orientation 必须归一化**（orientation 5–8 交换宽高），否则竖拍照片布局全错。ImageIO 提取预览时用 `kCGImageSourceCreateThumbnailWithTransform = true` 应用方向。
 6. **删除/清理永远不动源文件**：删除项目默认只删数据库记录和缓存；链接模式的源文件任何路径都不可写删（XMP 导出除外，那是用户显式动作）。
 
-## 约定
+## 共同约定
 
 - UI 文案一律中文；代码注释从简，只写「为什么」
 - 新增缓存类目录要同时接入 `CacheManager`（设置页统计/清理）
-- 设置项用 `@AppStorage`；`preferredEditorPath`、`autoBuildPreviews`、`libraryBasePath` 已被占用
-- 外观跟随系统：不设 `preferredColorScheme`，颜色全用 semantic colors
+- 设置项：macOS 用 `@AppStorage`（`preferredEditorPath`、`autoBuildPreviews`、`libraryBasePath` 已占用）；Android 用 DataStore（同名键已占用，另有 `libraryTreeUri/Display`）
+- 外观跟随系统：不设 `preferredColorScheme`/硬编码主题色，颜色全用 semantic colors
+- 两平台 XMP sidecar 格式保持一致（`xmp:Rating`），互相可读

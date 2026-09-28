@@ -8,3 +8,11 @@ xcuserdata/
 
 # XcodeGen 生成物（由 project.yml 重新生成）
 NEFViewer.xcodeproj/
+
+# Android / Gradle
+NEFViewer-Android/.gradle/
+NEFViewer-Android/.gradle-home/
+NEFViewer-Android/.idea/
+NEFViewer-Android/local.properties
+NEFViewer-Android/**/build/
+NEFViewer-Android/*.iml
