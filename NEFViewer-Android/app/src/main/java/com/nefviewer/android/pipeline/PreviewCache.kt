@@ -6,7 +6,13 @@ import android.graphics.BitmapFactory
 import android.util.LruCache
 import com.nefviewer.android.data.PhotoEntity
 import com.nefviewer.android.data.ProjectEntity
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
@@ -88,33 +94,49 @@ class PreviewCache(private val context: Context) {
     /**
      * 全尺寸（仅放大超过阈值时调用），输出 HARDWARE bitmap。gen 必须取调用时的
      * generation；解码完成后若 generation 已变，结果直接回收，保证快速翻页不被大解码堵住。
+     * 同一时刻全尺寸解码只有一个在飞：同照片的并发调用共享同一个 Deferred，
+     * 换照片则取消上一张——捏合手势每帧重启 LaunchedEffect，没有去重就是 N 个
+     * 181MB 解码并发（实测内存风暴 → 主线程饿死 → ANR 的元凶）
      */
+    private val fullMutex = Mutex()
+    private var fullJob: Pair<String, Deferred<Bitmap?>>? = null
+
     suspend fun fullSize(project: ProjectEntity, photo: PhotoEntity, gen: Long): Bitmap? =
         withContext(Dispatchers.IO) {
             fullSlot?.let { (id, bmp) -> if (id == photo.id) return@withContext bmp }
-            runCatching {
-                val input = PhotoInputResolver.open(context, project, photo)
-                val bmp = try {
-                    val info = PreviewExtractor.parse(input)
-                    val jpeg = PreviewExtractor.readJpeg(input, info.largestPreview)
-                    PreviewExtractor.decode(jpeg, info.orientation, Int.MAX_VALUE, hardwareOut = true)
-                } finally {
-                    input.close()
-                }
-                if (generation.get() != gen) {
-                    bmp.recycle()
-                    null
+            val deferred = fullMutex.withLock {
+                val cur = fullJob
+                if (cur != null && cur.first == photo.id && cur.second.isActive) {
+                    cur.second
                 } else {
-                    val old = fullSlot
-                    fullSlot = photo.id to bmp
-                    if (old != null && old.first != photo.id) old.second.recycle()
-                    bmp
+                    cur?.second?.cancel()
+                    async { decodeFull(project, photo, gen) }.also { fullJob = photo.id to it }
                 }
-            }.getOrNull()
+            }
+            deferred.await()
         }
 
+    private suspend fun decodeFull(project: ProjectEntity, photo: PhotoEntity, gen: Long): Bitmap? {
+        val bmp = runCatching {
+            val input = PhotoInputResolver.open(context, project, photo)
+            try {
+                val info = PreviewExtractor.parse(input)
+                val jpeg = PreviewExtractor.readJpeg(input, info.largestPreview)
+                PreviewExtractor.decode(jpeg, info.orientation, Int.MAX_VALUE, hardwareOut = true)
+            } finally {
+                input.close()
+            }
+        }.getOrNull() ?: return null
+        if (!currentCoroutineContext().isActive || generation.get() != gen) {
+            bmp.recycle()
+            return null
+        }
+        fullSlot = photo.id to bmp
+        return bmp
+    }
+
+    /** 只丢引用不 recycle：旧页面可能还在 Compose 里绘制这张 bitmap，recycle 会崩，交给 GC */
     fun clearFullSlot() {
-        fullSlot?.second?.recycle()
         fullSlot = null
     }
 

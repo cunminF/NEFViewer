@@ -134,10 +134,11 @@ fun SingleImageScreen(
 
     BackHandler(onBack = onClose)
 
-    // 翻页：作废旧全尺寸解码，预取 ±2 标准档（翻页轻路径）
+    // 翻页：作废旧全尺寸解码并释放旧全尺寸（181MB，不随翻页常驻），预取 ±2 标准档（翻页轻路径）
     LaunchedEffect(pagerState.currentPage) {
-        PreviewCache.get(context).bumpGeneration()
         val cache = PreviewCache.get(context)
+        cache.bumpGeneration()
+        cache.clearFullSlot()
         for (i in pagerState.currentPage - 2..pagerState.currentPage + 2) {
             photos.getOrNull(i)?.let { launch { cache.standard(project, it) } }
         }
@@ -253,6 +254,9 @@ private fun ZoomablePhoto(
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var fullBmp by remember { mutableStateOf<ImageBitmap?>(null) }
+    // 同一页只发起一次全尺寸解码；scale 每帧变都会重启 LaunchedEffect，
+    // 没有这个闸，解码完成前的每一帧都会新发一个 181MB 解码（内存风暴元凶）
+    var fullRequested by remember { mutableStateOf(false) }
 
     val bitmap by produceState<ImageBitmap?>(null, photo.id) {
         value = ThumbnailCache.get(context).get(project, photo)?.asImageBitmap()
@@ -263,15 +267,21 @@ private fun ZoomablePhoto(
         scale = 1f
         offset = Offset.Zero
         fullBmp = null
+        fullRequested = false
     }
 
     LaunchedEffect(scale) {
         onZoomChanged(scale > 1.05f)
-        if (scale > 1.2f && fullBmp == null) {
-            val cache = PreviewCache.get(context)
-            val gen = cache.generation.get()
-            cache.fullSize(project, photo, gen)?.let {
-                if (scale > 1.2f) fullBmp = it.asImageBitmap()
+        if (scale > 1.2f && fullBmp == null && !fullRequested) {
+            fullRequested = true
+            try {
+                val cache = PreviewCache.get(context)
+                val gen = cache.generation.get()
+                cache.fullSize(project, photo, gen)?.let {
+                    if (scale > 1.2f) fullBmp = it.asImageBitmap()
+                }
+            } finally {
+                fullRequested = false
             }
         }
     }

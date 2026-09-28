@@ -45,7 +45,7 @@ app/src/main/java/com/nefviewer/android/
 4. **照片访问 URI 优先**（`PhotoInputResolver`）：`documentUri` 非空走 PfdSeekableInput（链接源/SAF 图库副本），否则走图库文件路径。拷贝目标可以是应用私有目录（文件）或用户自选 SAF 目录（`NEF Viewer/<项目名>/` 子目录），删除项目/批量删除两条路径都要覆盖。
 5. **排序实时应用但单图页序冻结**：打分后 Room 流刷新，网格列表立即重排；但单图视图使用进入时的**冻结列表快照**（`BrowserScreen.singleList`），翻页顺序不随评分变，星级显示走 `livePhotos` 的 id→rating 映射。网格交互：短按进单图、长按进多选（多选模式下短按=加选）——不要在 PhotoCell 上同时挂 onClick 和 onDoubleClick（单击会被双击判定延迟 300ms）。
 6. **EXIF orientation 入库即归一化**（orientation 5–8 交换宽高），与 macOS 版同规则；Z8 竖拍靠这个。
-7. **全尺寸解码看 generation**：翻页 `bumpGeneration`，解码完成发现代次过期即回收——快速连翻不能被 181MB 大解码堵住（largeHeap 已开）。
+7. **全尺寸解码单飞去重 + generation 作废**（2026-09 ANR 换来的教训，违反任何一条都是内存风暴）：a) `LaunchedEffect(scale)` 会在捏合**每帧**重启——全尺寸请求必须加"每页一次"闸（`fullRequested`，try/finally 复位）；b) `PreviewCache.fullSize` 用 Mutex+Deferred 去重，同照片并发共享、换照片取消旧的；c) 翻页 `bumpGeneration` **并 `clearFullSlot()`**——181MB 不随翻页常驻；d) **交给 UI 的 bitmap 绝不 recycle**（旧页可能还在 Compose 里绘制，recycle 即崩），只丢引用让 GC 收；e) `hardwareOut=true` 时原图也直接解成 HARDWARE（GPU→GPU 变换），峰值少一份 181MB 软件拷贝。实锤案例：连点放大数次→并发 3 个 181MB 解码→214 万缺页→主线程饿死 5.8s→ANR 弹窗→用户点关闭="闪退"。
 8. Room 开发期允许 `fallbackToDestructiveMigration`（加字段直接升版本号，数据重来）。
 
 ## macOS 版（本目录）

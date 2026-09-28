@@ -76,7 +76,9 @@ object PreviewExtractor {
         while (maxDim / (sample * 2) >= targetMaxDim) sample *= 2
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sample
-            inPreferredConfig = Bitmap.Config.ARGB_8888
+            // hardwareOut 时原图也直接解成 HARDWARE：方向+缩放变成 GPU→GPU，
+            // 峰值内存少一份 181MB 软件拷贝（全尺寸解码内存风暴的成因之一）
+            inPreferredConfig = if (hardwareOut) Bitmap.Config.HARDWARE else Bitmap.Config.ARGB_8888
         }
         val raw = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, opts)
             ?: throw IllegalStateException("JPEG 解码失败")

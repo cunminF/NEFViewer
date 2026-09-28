@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 ADB = "/Users/bbpcs/Library/Android/sdk/platform-tools/adb"
-DEV = "192.168.50.135:5555"
+DEV = "HA2Q0SW1"  # USB 调试；无线调试时为 192.168.50.135:5555
 
 def dump():
     subprocess.run([ADB, "-s", DEV, "shell", "uiautomator", "dump", "/sdcard/__ui.xml"],
