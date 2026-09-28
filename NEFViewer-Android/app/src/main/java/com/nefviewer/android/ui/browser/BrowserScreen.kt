@@ -259,7 +259,26 @@ fun BrowserScreen(
                 )
             }
         } else {
+            val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+            // 滚动预取：把可视区之后两屏的缩略图提前拉进缓存
+            androidx.compose.runtime.LaunchedEffect(gridState, displayed, currentProject?.id) {
+                val proj = currentProject ?: return@LaunchedEffect
+                val queued = mutableSetOf<String>()
+                androidx.compose.runtime.snapshotFlow {
+                    gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                }.collect { last ->
+                    if (last < 0) return@collect
+                    val to = (last + 24).coerceAtMost(displayed.size)
+                    for (i in (last + 1).coerceAtLeast(0) until to) {
+                        val p = displayed.getOrNull(i) ?: continue
+                        if (queued.add(p.id)) {
+                            launch { ThumbnailCache.get(context).get(proj, p) }
+                        }
+                    }
+                }
+            }
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Adaptive(minSize = 160.dp),
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(8.dp),

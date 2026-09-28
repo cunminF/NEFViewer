@@ -14,7 +14,7 @@ import java.io.File
 class ThumbnailCache(private val context: Context) {
 
     private val mem = object : LruCache<String, Bitmap>(
-        (Runtime.getRuntime().maxMemory() / 8).toInt()
+        (Runtime.getRuntime().maxMemory() / 4).toInt()
     ) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
