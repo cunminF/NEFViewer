@@ -43,7 +43,7 @@ app/src/main/java/com/nefviewer/android/
 2. **翻页手势分层**（`SingleImageScreen.ZoomablePhoto`）：未放大时单指滑动**绝不消费**（让给 HorizontalPager 翻页）；双指捏合或已放大（>1.05×）才接管变换手势。`detectTransformGestures` 会吃掉单指拖动导致 Pager 失效——这是第一个真机 bug。
 3. **不要假设能访问 adb push 的文件**：scoped storage 下应用连自己的 `Android/data` 里 shell 创建的文件都读不到（联想 ZUI/Android 16 实测）。一切外部文件走 **SAF**；SAF 授权要**读写**都持久化（写用于 XMP/批量删除）。测试数据推到 `/sdcard/Download/` 再 SAF 授权。
 4. **照片访问 URI 优先**（`PhotoInputResolver`）：`documentUri` 非空走 PfdSeekableInput（链接源/SAF 图库副本），否则走图库文件路径。拷贝目标可以是应用私有目录（文件）或用户自选 SAF 目录（`NEF Viewer/<项目名>/` 子目录），删除项目/批量删除两条路径都要覆盖。
-5. **排序实时应用**：打分后 Room 流刷新，列表立即重排——Pager 当前页照片会跳（与 macOS 版一致的行为，不是 bug）。
+5. **排序实时应用但单图页序冻结**：打分后 Room 流刷新，网格列表立即重排；但单图视图使用进入时的**冻结列表快照**（`BrowserScreen.singleList`），翻页顺序不随评分变，星级显示走 `livePhotos` 的 id→rating 映射。网格交互：短按进单图、长按进多选（多选模式下短按=加选）——不要在 PhotoCell 上同时挂 onClick 和 onDoubleClick（单击会被双击判定延迟 300ms）。
 6. **EXIF orientation 入库即归一化**（orientation 5–8 交换宽高），与 macOS 版同规则；Z8 竖拍靠这个。
 7. **全尺寸解码看 generation**：翻页 `bumpGeneration`，解码完成发现代次过期即回收——快速连翻不能被 181MB 大解码堵住（largeHeap 已开）。
 8. Room 开发期允许 `fallbackToDestructiveMigration`（加字段直接升版本号，数据重来）。

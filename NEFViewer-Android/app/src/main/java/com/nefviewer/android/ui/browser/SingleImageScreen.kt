@@ -78,6 +78,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun SingleImageScreen(
     photos: List<PhotoEntity>,
+    livePhotos: List<PhotoEntity>,
     startIndex: Int,
     project: ProjectEntity,
     onClose: () -> Unit,
@@ -90,6 +91,9 @@ fun SingleImageScreen(
     val focusRequester = remember { FocusRequester() }
     val settings = remember { SettingsRepository.get(context) }
     val preferredEditor by settings.preferredEditor.collectAsState(initial = null)
+
+    /** photos 是进入单图时的冻结快照（页序稳定）；评分显示走 livePhotos 实时映射 */
+    val ratingMap = remember(livePhotos) { livePhotos.associate { it.id to it.rating } }
 
     fun openEditor(photo: PhotoEntity) {
         scope.launch {
@@ -227,9 +231,10 @@ fun SingleImageScreen(
                 horizontalArrangement = Arrangement.Center,
             ) {
                 RatingBar(
-                    rating = current.rating,
+                    rating = ratingMap[current.id] ?: current.rating,
                     onRate = { onRate(current.id, it) },
                     starColor = Color(0xFFFFD60A),
+                    showClear = true,
                 )
             }
         }

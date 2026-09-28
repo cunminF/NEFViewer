@@ -97,18 +97,27 @@ fun BrowserScreen(
     val hideUnrated by vm.hideUnrated.collectAsState()
     val scope = rememberCoroutineScope()
     var singleIndex by rememberSaveable { mutableIntStateOf(-1) }
+    /** 单图模式使用进入时的列表快照：翻页顺序不随评分重排变化 */
+    var singleList by remember { mutableStateOf<List<PhotoEntity>?>(null) }
     var sortMenu by remember { mutableStateOf(false) }
     var filterMenu by remember { mutableStateOf(false) }
     var moreMenu by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
+    fun openSingle(index: Int) {
+        singleList = displayed
+        singleIndex = index
+    }
+
     val currentProject = project
-    if (singleIndex >= 0 && displayed.isNotEmpty() && currentProject != null) {
+    val frozenList = singleList
+    if (singleIndex >= 0 && frozenList != null && frozenList.isNotEmpty() && currentProject != null) {
         SingleImageScreen(
-            photos = displayed,
-            startIndex = singleIndex.coerceAtMost(displayed.size - 1),
+            photos = frozenList,
+            livePhotos = displayed,
+            startIndex = singleIndex.coerceAtMost(frozenList.size - 1),
             project = currentProject,
-            onClose = { singleIndex = -1 },
+            onClose = { singleIndex = -1; singleList = null },
             onRate = { id, r -> vm.setRating(id, r) },
         )
         return
@@ -213,6 +222,7 @@ fun BrowserScreen(
                         RatingBar(
                             rating = 0,
                             onRate = { vm.setRatingForSelection(it) },
+                            showClear = true,
                         )
                         TextButton(onClick = { vm.clearSelection() }) { Text("取消选择") }
                     }
@@ -235,7 +245,7 @@ fun BrowserScreen(
                 Key.Enter, Key.NumPadEnter -> {
                     val first = selection.firstOrNull()
                     val idx = displayed.indexOfFirst { it.id == first }
-                    if (idx >= 0) { singleIndex = idx; true } else false
+                    if (idx >= 0) { openSingle(idx); true } else false
                 }
                 else -> false
             }
@@ -261,9 +271,12 @@ fun BrowserScreen(
                         photo = photo,
                         project = currentProject,
                         selected = photo.id in selection,
-                        onClick = { vm.toggleSelect(photo.id) },
-                        onDoubleClick = {
-                            singleIndex = displayed.indexOfFirst { it.id == photo.id }
+                        onClick = {
+                            if (selection.isEmpty()) {
+                                openSingle(displayed.indexOfFirst { it.id == photo.id })
+                            } else {
+                                vm.toggleSelect(photo.id)
+                            }
                         },
                         onLongClick = { vm.toggleSelect(photo.id) },
                     )
@@ -318,7 +331,6 @@ private fun PhotoCell(
     project: ProjectEntity?,
     selected: Boolean,
     onClick: () -> Unit,
-    onDoubleClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -333,7 +345,6 @@ private fun PhotoCell(
             .border(width = if (selected) 3.dp else 0.dp, color = borderColor)
             .combinedClickable(
                 onClick = onClick,
-                onDoubleClick = onDoubleClick,
                 onLongClick = onLongClick,
             ),
     ) {
