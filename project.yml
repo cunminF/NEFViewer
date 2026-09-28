@@ -1,0 +1,26 @@
+name: NEFViewer
+options:
+  bundleIdPrefix: com.nefviewer
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+targets:
+  NEFViewer:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: NEFViewer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nefviewer.NEFViewer
+        PRODUCT_NAME: NEF Viewer
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        INFOPLIST_KEY_ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO

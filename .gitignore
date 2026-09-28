@@ -1,0 +1,10 @@
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# XcodeGen 生成物（由 project.yml 重新生成）
+NEFViewer.xcodeproj/
