@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct SingleImageView: View {
     let items: [PhotoItem]
@@ -17,7 +18,6 @@ struct SingleImageView: View {
     @State private var baseScale: CGFloat?
     @State private var offset: CGSize = .zero
     @State private var dragStart: CGSize?
-    @FocusState private var focused: Bool
 
     private var index: Int {
         items.firstIndex { $0.id == currentID } ?? 0
@@ -83,9 +83,7 @@ struct SingleImageView: View {
             .padding(.vertical, 12)
             .background(.bar)
         }
-        .focusable()
-        .focused($focused)
-        .onAppear { focused = true }
+        .background(KeyMonitorView { event in handleKey(event) })
         .onDisappear {
             Task { await PreviewCache.shared.clearFull() }
         }
@@ -93,21 +91,6 @@ struct SingleImageView: View {
         .onChange(of: scale) { _, newScale in
             if newScale > 1.2 { ensureFullRes() }
         }
-        .onKeyPress(.leftArrow) { step(by: -1) }
-        .onKeyPress(.rightArrow) { step(by: 1) }
-        .onKeyPress(.escape) {
-            onClose()
-            return .handled
-        }
-        .onKeyPress("+") { zoom(by: 1.35) }
-        .onKeyPress("=") { zoom(by: 1.35) }
-        .onKeyPress("-") { zoom(by: 1 / 1.35) }
-        .onKeyPress("0") { onRate(current.id, 0); return .handled }
-        .onKeyPress("1") { onRate(current.id, 1); return .handled }
-        .onKeyPress("2") { onRate(current.id, 2); return .handled }
-        .onKeyPress("3") { onRate(current.id, 3); return .handled }
-        .onKeyPress("4") { onRate(current.id, 4); return .handled }
-        .onKeyPress("5") { onRate(current.id, 5); return .handled }
     }
 
     private var magnifyGesture: some Gesture {
@@ -132,23 +115,40 @@ struct SingleImageView: View {
             .onEnded { _ in dragStart = nil }
     }
 
-    private func zoom(by factor: CGFloat) -> KeyPress.Result {
+    private func zoom(by factor: CGFloat) {
         withAnimation(.easeOut(duration: 0.12)) {
             scale = min(10, max(1, scale * factor))
             if scale <= 1 { offset = .zero }
         }
-        return .handled
     }
 
-    private func step(by delta: Int) -> KeyPress.Result {
+    private func step(by delta: Int) {
         let newIndex = index + delta
-        guard items.indices.contains(newIndex) else { return .handled }
+        guard items.indices.contains(newIndex) else { return }
         currentID = items[newIndex].id
-        return .handled
     }
 
-    /// 翻页轻路径：640px 网格缓存（瞬时）→ 3200px 标准档（磁盘缓存或 ~0.2s 生成）。
-    /// 不做全尺寸解码——快速连翻时读卡带宽始终服务于当前页
+    /// 键盘监听回调（NSEvent 本地监视器，不依赖焦点）：←→ 翻页、Esc 返回、0-5 打分、+/- 缩放
+    private func handleKey(_ event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 123: step(by: -1); return true   // ←
+        case 124: step(by: 1); return true    // →
+        case 53: onClose(); return true       // Esc
+        default: break
+        }
+        guard let chars = event.charactersIgnoringModifiers, let key = chars.first else { return false }
+        switch key {
+        case "0", "1", "2", "3", "4", "5":
+            onRate(current.id, Int(String(key))!)
+            return true
+        case "+", "=": zoom(by: 1.35); return true
+        case "-": zoom(by: 1 / 1.35); return true
+        default: return false
+        }
+    }
+
+    /// 翻页轻路径：640px 网格缓存（只查缓存，绝不为它现解析整张 NEF）→ 3200px 标准档。
+    /// 两路并发，缩略图只为垫背；不做全尺寸解码——快速连翻时读卡带宽始终服务于当前页
     private func loadCurrent() async {
         scale = 1
         offset = .zero
@@ -157,11 +157,14 @@ struct SingleImageView: View {
         let item = current
         let url = item.absoluteURL(under: rootURL)
 
-        if let thumb = await ThumbnailCache.shared.thumbnail(for: url, key: item.id, projectID: projectID) {
+        async let standardResult = PreviewCache.shared.image(
+            id: item.id, url: url, projectID: projectID, tier: .standard
+        )
+        if let thumb = await ThumbnailCache.shared.cached(key: item.id, projectID: projectID) {
             guard !Task.isCancelled, current.id == item.id else { return }
             displayImage = thumb
         }
-        if let standard = await PreviewCache.shared.image(id: item.id, url: url, projectID: projectID, tier: .standard) {
+        if let standard = await standardResult {
             guard !Task.isCancelled, current.id == item.id else { return }
             displayImage = standard
         }

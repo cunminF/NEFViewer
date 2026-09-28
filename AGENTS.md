@@ -74,13 +74,13 @@ NEFViewer/
 │   ├── NEFImageLoader.swift     # ImageIO 内嵌预览提取 + EXIF 拍摄时间 + SourceDateCache
 │   ├── ThumbnailCache.swift     # 640px 网格缩略图：内存 + 磁盘，按 Photo.id 命名
 │   ├── PreviewCache.swift       # 3200px 标准档（磁盘持久化）+ 全尺寸单槽（内存，generation 取消）
-│   ├── PreviewBuilder.swift     # 全量预渲染（全局单例 @Observable，驱动进度浮层）
+│   ├── PreviewBuilder.swift     # 全量预渲染：3200+640 双档同出（全局单例 @Observable，驱动进度浮层）
 │   ├── CacheManager.swift       # 缓存统计/清理/孤立缓存
 │   ├── ExternalEditor.swift     # LaunchServices 编辑器发现 + NSWorkspace 打开
 │   └── RatingStore.swift        # XMP sidecar 导出
 └── Views/                   # ProjectListView / NewProjectSheet（两步向导）/
                              # ProjectBrowserView / PhotoCellView / SingleImageView /
-                             # BrowserState（+PhotoItem）/ RatingControl / SettingsView
+                             # BrowserState（+PhotoItem）/ RatingControl / KeyMonitorView / SettingsView
 ```
 
 ### macOS 版关键架构决策（都是用崩溃换来的，改动前先读）
@@ -91,6 +91,9 @@ NEFViewer/
 4. **图像管线不走 RAW 解码**：Z8 NEF 内嵌全尺寸 JPEG 预览。网格 640px / 单图标准档 3200px（均磁盘缓存），全尺寸 8256px 仅放大 >1.2× 时按需解码且翻页可取消（`PreviewCache.generation`）。改管线时保持「翻页轻路径」原则：快速连翻不能被大解码堵住。
 5. **EXIF orientation 必须归一化**（orientation 5–8 交换宽高），否则竖拍照片布局全错。ImageIO 提取预览时用 `kCGImageSourceCreateThumbnailWithTransform = true` 应用方向。
 6. **删除/清理永远不动源文件**：删除项目默认只删数据库记录和缓存；链接模式的源文件任何路径都不可写删（XMP 导出除外，那是用户显式动作）。
+7. **预渲染必须双档同出**：`PreviewBuilder` 解码 3200 后同步派生 640 落盘（`ThumbnailCache.storeDerived`）。只出 3200 会让网格滚动/单图翻页回退到逐张解析 NEF（实测 870 项目网格二次卡顿的元凶）。3200 已在磁盘时 640 直接由它缩放，增量补齐不碰 NEF。
+8. **单图翻页热路径绝不为缩略图解析 NEF**：`loadCurrent` 用 `ThumbnailCache.cached`（只查内存+磁盘）与 3200 请求并发；未命中就跳过缩略图直接等标准档。曾用 `thumbnail(for:)`（miss 时现解析整张 NEF）串行挡在 3200 磁盘命中前面——表现为「按右键没反应，过一会才翻」。
+9. **单图键盘走 NSEvent 本地监视器**（`KeyMonitorView`），不依赖 SwiftUI 焦点：`.onKeyPress` 在焦点被工具栏/菜单拿走后静默失效。监视器只处理本窗口、无弹层、非 Cmd 的按键，其余一律放行。
 
 ## 共同约定
 

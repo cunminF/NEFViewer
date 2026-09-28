@@ -1,6 +1,7 @@
 import Foundation
 
 /// 全量标准预览生成器（类 Adobe 的 1:1 预览构建）：后台并发生成 3200px 磁盘缓存，
+/// 并从已解码的 3200 同步派生 640px 网格档落盘（一次 NEF 解码产出两档）；
 /// 主界面底部显示全局进度浮层，可取消；已存在的自动跳过（增量）
 @MainActor @Observable
 final class PreviewBuilder {
@@ -49,12 +50,16 @@ final class PreviewBuilder {
         await withTaskGroup(of: Void.self) { group in
             func submit(_ target: (id: UUID, url: URL)) {
                 group.addTask {
-                    _ = await PreviewCache.shared.image(
+                    if let image = await PreviewCache.shared.image(
                         id: target.id,
                         url: target.url,
                         projectID: projectID,
                         tier: .standard
-                    )
+                    ) {
+                        await ThumbnailCache.shared.storeDerived(
+                            from: image, key: target.id, projectID: projectID
+                        )
+                    }
                 }
             }
             while next < min(concurrency, targets.count) {
