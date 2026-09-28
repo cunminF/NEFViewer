@@ -325,7 +325,10 @@ private fun ZoomablePhoto(
                                 val pan = event.calculatePan()
                                 if (zoom != 1f || pan != Offset.Zero) {
                                     scale = (scale * zoom).coerceIn(1f, 8f)
-                                    offset = if (scale <= 1f) Offset.Zero else offset + pan
+                                    // 平移加速：放大越深、同一段指程走过的图像越多（8256px 全图
+                                    // 1:1 拖要反复抬手）；1.2× 时几乎无感，3× 及以上恒为 3 倍速
+                                    val panBoost = scale.coerceIn(1f, 3f)
+                                    offset = if (scale <= 1f) Offset.Zero else offset + pan * panBoost
                                     event.changes.forEach { if (it.positionChanged()) it.consume() }
                                 }
                             }
